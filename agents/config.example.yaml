@@ -1,0 +1,264 @@
+# AI Agent Configuration Example
+# Copy this file to config.yaml and customize with your specific values
+
+# Import tools directly from tools.yaml
+helpers:
+  db_conn: &db_conn
+    username: '${DATABASE_USERNAME}'
+    password: '${DATABASE_PASSWORD}'
+    dsn: '${DATABASE_DSN}'
+  queries:
+    table_query: &table_query |- 
+      SELECT table_name,
+             tablespace_name,
+             num_rows,
+             last_analyzed
+        from all_tables
+       where owner='${DATABASE_OWNER}'
+         and table_name like {table_name_pattern}
+       order by table_name
+
+    column_query: &column_query |-
+      SELECT column_name,
+             data_type,
+             data_length,
+             data_precision,
+             data_scale,
+             nullable,
+             data_default,
+             column_id
+        FROM all_tab_columns 
+       WHERE owner = '${DATABASE_OWNER}' 
+         AND table_name = {table_name}
+       ORDER BY column_id
+
+    fk_query: &fk_query |- 
+      SELECT fk.constraint_name,
+             fk.table_name,
+             fk.column_name,
+             pk.table_name AS referenced_table,
+             pk.column_name AS referenced_column,
+             fk.position
+        FROM all_cons_columns fk
+        JOIN all_constraints c ON fk.constraint_name = c.constraint_name 
+             AND fk.owner = c.owner
+        JOIN all_cons_columns pk ON c.r_constraint_name = pk.constraint_name 
+             AND c.r_owner = pk.owner 
+             AND fk.position = pk.position
+       WHERE c.constraint_type = 'R'
+         AND fk.owner = '${DATABASE_OWNER}'
+         AND fk.table_name = {table_name}
+       ORDER BY fk.constraint_name, fk.position
+    
+tools:
+  database_tables_discovery:
+    class: 'tools.oracle_tools.OracleQueryTool'
+    description: 'Tool for discovering database tables'
+    config:
+      query: *table_query
+      connection: *db_conn
+      params:
+        - name: 'table_name_pattern'
+          type: 'string'
+          description: "Pattern to match table names - should be wrapped in '%' wildcards"
+  
+  database_columns_discovery:
+    class: 'tools.oracle_tools.OracleQueryTool'
+    description: 'Tool for discovering database columns'
+    config:
+      query: *column_query
+      connection: *db_conn
+      params:
+        - name: 'table_name'
+          type: 'string'
+          description: 'Name of the table to retrieve columns from'
+  
+  database_foreign_keys_discovery:
+    class: 'tools.oracle_tools.OracleQueryTool'
+    description: 'Tool for discovering database foreign keys'
+    config:
+      query: *fk_query
+      connection: *db_conn
+      params:
+        - name: 'table_name'
+          type: 'string'
+          description: 'Name of the table to retrieve foreign keys from'
+
+  code_analysis_tool:
+    class: 'tools.terminal_tools.TerminalCommandTool'
+    description: >
+      Tool for analyzing code in allowed local repositories
+    config:
+      allowed_working_dirs: 
+        - '/path/to/your/project'
+      command: 'your-code-analyzer -p {prompt}'
+      params:
+        - name: "prompt"
+          type: "string"
+          description: "Prompt for code analysis"
+        - name: "working_dir"
+          type: "string"
+          description: "Working directory for the code execution"
+
+  file_reader:
+    class: "tools.file_tools.FileReaderTool"
+    description: "Read files from the filesystem"
+    config:
+      params:
+        - name: "path"
+          type: "string"
+          description: "Path to the file to read"
+        - name: "encoding"
+          type: "string"
+          description: "File encoding"
+          default: "utf-8"
+      allowed_extensions: [".txt", ".md", ".json", ".yaml", ".yml"]
+      max_size_mb: 10
+      root_path: "/path/to/your/documents/"
+
+  directory_list:
+    class: "tools.file_tools.DirectoryListTool"
+    description: "Allows to list all the files in specified directories"
+    config:
+      max_items: 100
+      root_path: "/path/to/your/documents/"
+      allowed_extensions: null
+      excluded_patterns: ["__pycache__", "*.pyc", ".DS_Store", "*.log", ".git"]
+      show_hidden: false
+      params:
+        - name: "filter_type"
+          type: "string"
+          description: "Filter by item type: 'all', 'files', or 'directories'"
+          default: "all"
+        - name: "name_pattern"
+          type: "string"
+          description: "Pattern to match file/folder names (supports wildcards)"
+
+  api_portfolio_items:
+    class: "tools.rally_tools.RallyAPITool"
+    description: "Tool for querying API portfolio items and features"
+    config:
+      api_key: "${API_KEY}"
+      host: "https://your-api-host.com/api/v2.0"
+      endpoint: "/portfolioitem/feature"
+      fetchFields: 'Score, State, Owner, Category, FormattedID'
+      params:
+        - name: "query"
+          type: "string"
+          description: "API query filter"
+        - name: "start"
+          type: "integer"
+          description: "Start index for pagination"
+          default: 1
+        - name: "order"
+          type: "string"
+          description: "Field to order by"
+          default: "Score"
+
+  api_item_details:
+    class: "tools.rally_tools.RallyAPITool"
+    description: "Tool for querying details of a specific API portfolio item"
+    config:
+      api_key: "${API_KEY}"
+      host: "https://your-api-host.com/api/v2.0"
+      endpoint: "/portfolioitem/feature/{item_id}"
+      resultsPath: "Feature"
+      errorsPath: "Feature.Errors"
+      params:
+        - name: "endpoint"
+          type: "string"
+          description: "Endpoint for the specific item, e.g. /portfolioitem/feature/12345"
+          required: true
+  
+  github_integration:
+    class: "core.tool_creation.generic_tools.RemoteMCPTools"
+    config:
+      url: "https://api.githubcopilot.com/mcp/"
+      api_key: "${GITHUB_TOKEN}"
+      tools_filter:
+        - 'list_branches'
+        - 'list_commits'
+        - 'list_pull_requests'
+        - 'list_issues'
+        - 'search_repositories'
+        - 'get_file_contents'
+        - 'get_pull_request_diff'
+
+root_agent:
+  name: 'ai_assistant'
+  model: 'gemini-2.5-pro'
+  description: 'AI Assistant Agent'
+  instruction: >
+    You are a helpful AI assistant who can answer user questions and help with various tasks.
+    You have access to documentation and can delegate tasks to specialized sub-agents.
+    You can also answer general knowledge questions.
+    You are a personal assistant for: ${USER_INFO}
+      
+  tools:
+    - file_reader
+    - directory_list
+  sub_agents:
+    api_agent:
+      name: "api_agent"
+      model: "gemini-2.5-pro"
+      description: "Agent for handling API interactions and portfolio management"
+      instruction: >
+         You are a helpful agent who can answer user questions about API portfolio items and features.
+         You are working with user ${USER_INFO}
+         Current date: ${CURRENT_DATE}
+         Here are some things to keep in mind:
+
+         - "Score" is a key metric for prioritizing items. 
+           Lower scores indicate higher priority. However, it should not be 0, 
+           except for completed items. When looking for current items 
+           (state is not defined) use additional filter on Score > 0
+         - Another field that is important is Category, used to define
+         the classification for the item.
+
+         - Ownership can be defined on several levels: TechOwner, Owner, Manager. Search by last name as it is most consistent
+         - TechOwner is string field, so usually use contains in query. e.g (TechOwner contains "Doe")
+         - API queries handle parentheses in a specific way - you need to enclose complex queries in parenthesis, 
+         e.g. ((TechOwner contains "John Doe") and (Score > 0)) or more complex ones 
+         "(((Name contains "pattern") AND (State.Name = "Done")) AND (Category contains "2025"))"
+        
+      tools:
+        - api_portfolio_items
+        - api_item_details
+
+    github_agent:
+      name: "github_agent"
+      model: "gemini-2.5-pro"
+      description: >
+        Agent for handling GitHub API interactions.
+      instruction: "You are a helpful agent who can answer user questions about GitHub repositories, issues, and pull requests. Things to keep in mind:
+        - You are bound to a specific GitHub organization, so try to search within that scope. 
+        - Include relevant topics when performing searches.
+        - When users ask about pull requests - keep in mind that they might be interested in all states, make sure you inform the user which statuses you are looking for"
+      tools:
+        - github_integration
+
+    code_agent:
+      name: 'code_agent'
+      description: >
+        Agent for asking questions about code in allowed working directories
+      instruction: >
+        You are a helpful agent who can answer user questions about code. 
+        You have access to working directories configured in your tools.
+        You handle questions related to specific implementations.
+      tools:
+        - code_analysis_tool
+
+    database_expert:
+      name: 'database_expert'
+      description: >
+        Agent for answering questions about database schema and tables
+      instruction: >
+        You are a helpful agent who can answer user questions about database schema. 
+        You have access to tools that can tell you about the tables in the database, 
+        and you can advise on creating queries to fetch data. You can provide insights on the schema.
+
+        You have access to the database schema and can provide insights on tables and relationships.
+      tools:
+        - database_tables_discovery
+        - database_columns_discovery
+        - database_foreign_keys_discovery
