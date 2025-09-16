@@ -32,13 +32,11 @@ class TerminalCommandTool(BaseFunctionToolFactory):
                 working_dir = config_working_dir
             else:
                 working_dir = params.get("working_dir", ".")
-            
-            print(f"Executing command: {params}")
-
+        
             # Determine the command to execute
             if fixed_command:
                 # Use fixed command from config with parameter substitution
-                command = self._replace_placeholders(fixed_command, template_params)
+                command = self._replace_placeholders(fixed_command, params)
                 
             elif template_name:
                 # Use predefined template
@@ -69,7 +67,7 @@ class TerminalCommandTool(BaseFunctionToolFactory):
 
             # Execute command
             result = await self._execute_command(
-                command, 
+                command,
                 working_dir, 
                 max_execution_time, 
                 capture_output,
@@ -268,11 +266,9 @@ class SafeTerminalTool(BaseFunctionToolFactory):
             else:
                 working_dir = params.get("working_dir", ".")
             
-            print(f"Executing safe command template: {params}")
-
             if fixed_command:
                 # Use fixed command from config with parameter substitution
-                command = self._replace_placeholders_safe(fixed_command, template_params)
+                command = self._replace_placeholders_safe(fixed_command, params)
                 
             elif template_name:
                 if not template_name:

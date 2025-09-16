@@ -90,8 +90,8 @@ tools:
       Tool for analyzing code in allowed local repositories
     config:
       allowed_working_dirs: 
-        - '/path/to/your/project'
-      command: 'your-code-analyzer -p {prompt}'
+        - '<<WORKING_DIR>>'
+      command: 'gemini -p {prompt}'
       params:
         - name: "prompt"
           type: "string"
