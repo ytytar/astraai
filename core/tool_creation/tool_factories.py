@@ -42,6 +42,8 @@ def create_function_with_signature(func_name: str, parameters: Dict[str, inspect
 
 class BaseToolFactory(ABC):
     """Base class for all AI agent tools."""
+
+    data_model = None
     
     def __init__(self, name: str, description: str, **config):
         self.name = name
@@ -60,6 +62,16 @@ class BaseToolFactory(ABC):
     
     def __str__(self):
         return f"{self.__class__.__name__}(name='{self.name}')"
+
+    @classmethod
+    def schema(cls) -> Dict[str, Any]:
+        """Get the tool's parameter schema."""
+        return cls.data_model.model_json_schema() if cls.data_model else {}
+
+    @classmethod
+    def validate_config(cls, config: Dict[str, Any]) -> Any:
+        """Validate and return typed configuration."""
+        return cls.data_model(**config) if cls.data_model else config
 
 
 class BaseFunctionToolFactory(BaseToolFactory):

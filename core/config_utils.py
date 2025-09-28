@@ -65,6 +65,12 @@ def _resolve_env_string(text: str) -> str:
     return re.sub(pattern, replace_env_var, text)
 
 
+def load_from_file(file_path: str):
+    with open(file_path, 'r', encoding='utf-8') as file:
+        config = yaml.safe_load(file)
+    
+    return config
+
 def load_config_with_env(file_path: str) -> Dict[str, Any]:
     """
     Load a YAML configuration file and resolve environment variables.
@@ -75,8 +81,7 @@ def load_config_with_env(file_path: str) -> Dict[str, Any]:
     Returns:
         Configuration dictionary with environment variables resolved
     """
-    with open(file_path, 'r', encoding='utf-8') as file:
-        config = yaml.safe_load(file)
+    config = load_from_file(file_path)
     
     return resolve_env_variables(config)
 
@@ -101,14 +106,15 @@ def validate_required_env_vars(config: Dict[str, Any],
     if missing_vars:
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
-def load_config(file_path):
+def load_config(file_path, resolve_env_var: bool=True):
     config_file = Path(file_path)
     if not config_file.exists():
         raise FileNotFoundError(f"Configuration file not found: {file_path}")
 
     # Load configuration with environment variable resolution
-    config = load_config_with_env(str(config_file))
-    return config
+    if resolve_env_var:
+        return load_config_with_env(str(config_file))
+    return load_from_file(str(config_file))
 
 # Example usage and testing
 if __name__ == "__main__":
