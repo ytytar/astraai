@@ -20,11 +20,13 @@ class RemoteMCPTools(BaseToolFactory):
         config = self.config
         # Build headers with authorization
         headers = {}
-        if isinstance(config, RemoteMCPToolsConfig) and config.headers:
-            headers = {"Authorization": f"Bearer {config.api_key}"}
+        if isinstance(config, RemoteMCPToolsConfig):
+            if config.api_key:
+               headers = {"Authorization": f"Bearer {config.api_key}"}
             headers.update(config.headers if config.headers else {})
-        elif isinstance(config, dict) and config.get('headers'):
-            headers = {"Authorization": f"Bearer {config.get('api_key', '')}"}
+        elif isinstance(config, dict):
+            if config.get('api_key'):
+                headers = {"Authorization": f"Bearer {config.get('api_key', '')}"}
             headers.update(config.get('headers', {}))
         
         return MCPToolset(
