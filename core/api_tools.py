@@ -128,6 +128,7 @@ def enhance_app_with_tool_schema_endpoints(app: FastAPI) -> FastAPI:
         try:
             # Common tool modules to check
             tool_modules = [
+                "core.tool_creation.generic_tools",
                 "tools.semantic_search",
                 "tools.file_tools", 
                 "tools.rally_tools",
@@ -146,7 +147,7 @@ def enhance_app_with_tool_schema_endpoints(app: FastAPI) -> FastAPI:
                         attr = getattr(module, attr_name)
                         if (isinstance(attr, type) and 
                             (hasattr(attr, 'schema') or hasattr(attr, 'data_model')) and 
-                            attr_name.endswith('Tool')):
+                            (attr_name.endswith('Tool') or attr_name.endswith('Tools'))):
                             
                             class_path = f"{module_name}.{attr_name}"
                             available_tools[class_path] = {
