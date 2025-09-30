@@ -3,13 +3,93 @@ import asyncio
 import threading
 import logging
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-from pydantic import BaseModel, Field
+from typing import Dict, Any, List, Optional, Literal
+from abc import ABC, abstractmethod
+from pydantic import BaseModel, Field, model_validator
 import chromadb
-from sentence_transformers import SentenceTransformer
 
 from core.tool_creation.tool_factories import BaseFunctionToolFactory
 from core.tool_creation.models import ToolParam
+
+
+# ============================================================================
+# Embedding Provider Abstraction
+# ============================================================================
+
+class BaseEmbeddingProvider(ABC):
+    """Abstract base class for embedding providers."""
+
+    @abstractmethod
+    def embed_texts(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for a list of texts."""
+        pass
+
+    @abstractmethod
+    def embed_query(self, query: str) -> List[float]:
+        """Generate embedding for a single query."""
+        pass
+
+
+class HuggingFaceEmbeddingProvider(BaseEmbeddingProvider):
+    """HuggingFace SentenceTransformer embedding provider."""
+
+    def __init__(self, model_name: str = 'all-MiniLM-L6-v2'):
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            raise ImportError(
+                "sentence-transformers is required for HuggingFace embeddings. "
+                "Install it with: pip install sentence-transformers"
+            )
+        self.model = SentenceTransformer(model_name)
+
+    def embed_texts(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for a list of texts."""
+        embeddings = self.model.encode(texts, convert_to_numpy=True)
+        return embeddings.tolist()
+
+    def embed_query(self, query: str) -> List[float]:
+        """Generate embedding for a single query."""
+        embedding = self.model.encode([query], convert_to_numpy=True)
+        return embedding[0].tolist()
+
+
+class VertexAIGeminiEmbeddingProvider(BaseEmbeddingProvider):
+    """Google VertexAI Gemini embedding provider."""
+
+    def __init__(
+        self,
+        model_name: str = 'text-embedding-004',
+        project_id: Optional[str] = None,
+        location: str = 'us-central1'
+    ):
+        try:
+            from vertexai.language_models import TextEmbeddingModel
+            import vertexai
+        except ImportError:
+            raise ImportError(
+                "google-cloud-aiplatform is required for VertexAI embeddings. "
+                "Install it with: pip install google-cloud-aiplatform"
+            )
+
+        # Initialize VertexAI
+        vertexai.init(project=project_id, location=location)
+        self.model = TextEmbeddingModel.from_pretrained(model_name)
+
+    def embed_texts(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for a list of texts."""
+        embeddings = self.model.get_embeddings(texts)
+        return [emb.values for emb in embeddings]
+
+    def embed_query(self, query: str) -> List[float]:
+        """Generate embedding for a single query."""
+        embeddings = self.model.get_embeddings([query])
+        return embeddings[0].values
+
+
+# ============================================================================
+# Configuration Models
+# ============================================================================
 
 
 class SemanticSearchConfig(BaseModel):
@@ -34,8 +114,34 @@ class SemanticSearchConfig(BaseModel):
         le=500,
         description="Overlap between chunks (in characters)"
     )
-    
-    # Default values for LLM parameters  
+
+    # Embedding provider configuration
+    embedding_provider: Literal["huggingface", "vertexai"] = Field(
+        default="huggingface",
+        description="Embedding provider to use: 'huggingface' or 'vertexai'"
+    )
+
+    # HuggingFace configuration (used when embedding_provider='huggingface')
+    huggingface_model: str = Field(
+        default="all-MiniLM-L6-v2",
+        description="HuggingFace model name for embeddings"
+    )
+
+    # VertexAI configuration (used when embedding_provider='vertexai')
+    vertexai_model: str = Field(
+        default="text-embedding-004",
+        description="VertexAI embedding model name"
+    )
+    vertexai_project_id: Optional[str] = Field(
+        default=None,
+        description="GCP project ID for VertexAI (if not provided, uses default from environment)"
+    )
+    vertexai_location: str = Field(
+        default="us-central1",
+        description="GCP location/region for VertexAI"
+    )
+
+    # Default values for LLM parameters
     similarity_threshold: float = Field(
         default=0.3,
         ge=0.0,
@@ -48,13 +154,13 @@ class SemanticSearchConfig(BaseModel):
         le=100,
         description="Default maximum number of search results to return"
     )
-    
+
     # LLM callable parameters definition
     params: List[ToolParam] = Field(
         default=[
             ToolParam(
                 name="query",
-                type="string", 
+                type="string",
                 description="The query to search for",
                 required=True
             )
@@ -74,12 +180,17 @@ class SemanticSearchTool(BaseFunctionToolFactory):
         # Validate configuration using the static data model
         self.tool_config = self.data_model(**config)
 
+        # Setup logging
+        self.logger = logging.getLogger(f"semantic_search_{name}")
+        self.logger.setLevel(logging.INFO)
+
+        # Initialize embedding provider based on configuration
+        self.embedding_provider = self._create_embedding_provider()
+        self.logger.info(f"Initialized {self.tool_config.embedding_provider} embedding provider")
+
         # Initialize ChromaDB client - store in the scan directory
         chroma_path = os.path.join(self.tool_config.scan_directory, f".chroma_db_{name}")
         self.chroma_client = chromadb.PersistentClient(path=chroma_path)
-
-        # Initialize embedding model
-        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
         # Get or create collection
         self.collection = self.chroma_client.get_or_create_collection(
@@ -87,16 +198,32 @@ class SemanticSearchTool(BaseFunctionToolFactory):
             metadata={"hnsw:space": "cosine"}
         )
 
-        # Setup logging
-        self.logger = logging.getLogger(f"semantic_search_{name}")
-        self.logger.setLevel(logging.INFO)
-
         # Track indexing state
         self._indexing_complete = False
         self._indexing_lock = threading.Lock()
 
         # Start background indexing
         self._start_background_indexing()
+
+    def _create_embedding_provider(self) -> BaseEmbeddingProvider:
+        """Factory method to create the appropriate embedding provider."""
+        provider_type = self.tool_config.embedding_provider
+
+        if provider_type == "huggingface":
+            return HuggingFaceEmbeddingProvider(
+                model_name=self.tool_config.huggingface_model
+            )
+        elif provider_type == "vertexai":
+            return VertexAIGeminiEmbeddingProvider(
+                model_name=self.tool_config.vertexai_model,
+                project_id=self.tool_config.vertexai_project_id,
+                location=self.tool_config.vertexai_location
+            )
+        else:
+            raise ValueError(
+                f"Unsupported embedding provider: {provider_type}. "
+                f"Supported providers: huggingface, vertexai"
+            )
 
     def _start_background_indexing(self):
         """Start background indexing process."""
@@ -164,7 +291,7 @@ class SemanticSearchTool(BaseFunctionToolFactory):
 
             self.logger.info(f"Scanned {files_processed} files, found {len(documents)} document chunks")
 
-            # Add documents to ChromaDB in batches
+            # Add documents to ChromaDB in batches with embeddings
             if documents:
                 try:
                     batch_size = 100
@@ -173,16 +300,22 @@ class SemanticSearchTool(BaseFunctionToolFactory):
                         batch_metas = metadatas[i:i + batch_size]
                         batch_ids = ids[i:i + batch_size]
 
+                        # Generate embeddings for this batch
+                        batch_embeddings = self.embedding_provider.embed_texts(batch_docs)
+
                         self.collection.add(
                             documents=batch_docs,
                             metadatas=batch_metas,
-                            ids=batch_ids
+                            ids=batch_ids,
+                            embeddings=batch_embeddings
                         )
                         self.logger.debug(f"Added batch {i//batch_size + 1}: {len(batch_docs)} chunks")
 
                     self.logger.info(f"Successfully indexed {len(documents)} document chunks")
                 except Exception as e:
                     self.logger.error(f"Failed to add documents to ChromaDB: {e}")
+                    import traceback
+                    self.logger.error(f"Traceback: {traceback.format_exc()}")
                     return  # Don't mark as complete if indexing failed
             else:
                 self.logger.info("No documents found to index")
@@ -271,9 +404,12 @@ class SemanticSearchTool(BaseFunctionToolFactory):
                 self.logger.info(f"Indexing appears complete ({collection_count} documents), fixing completion flag")
                 self._indexing_complete = True
 
+            # Generate query embedding
+            query_embedding = self.embedding_provider.embed_query(query)
+
             # Perform semantic search
             results = self.collection.query(
-                query_texts=[query],
+                query_embeddings=[query_embedding],
                 n_results=limit,
                 include=['documents', 'metadatas', 'distances']
             )

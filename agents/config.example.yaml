@@ -184,6 +184,46 @@ tools:
         - 'get_file_contents'
         - 'get_pull_request_diff'
 
+  # Semantic search with HuggingFace embeddings (for private/local use)
+  semantic_search_hf:
+    class: "tools.semantic_search.SemanticSearchTool"
+    description: "Search through indexed documents using semantic similarity (HuggingFace)"
+    config:
+      scan_directory: "/path/to/your/documents/"
+      file_extensions: [".md", ".txt", ".py", ".js", ".ts", ".yaml", ".yml"]
+      chunk_size: 1000
+      chunk_overlap: 200
+      embedding_provider: "huggingface"
+      huggingface_model: "all-MiniLM-L6-v2"
+      similarity_threshold: 0.3
+      limit: 10
+      params:
+        - name: "query"
+          type: "string"
+          description: "The search query"
+          required: true
+
+  # Semantic search with VertexAI Gemini embeddings (for corporate/cloud use)
+  semantic_search_vertexai:
+    class: "tools.semantic_search.SemanticSearchTool"
+    description: "Search through indexed documents using semantic similarity (VertexAI)"
+    config:
+      scan_directory: "/path/to/your/documents/"
+      file_extensions: [".md", ".txt", ".py", ".js", ".ts", ".yaml", ".yml"]
+      chunk_size: 1000
+      chunk_overlap: 200
+      embedding_provider: "vertexai"
+      vertexai_model: "text-embedding-004"
+      vertexai_project_id: "${GCP_PROJECT_ID}"  # Optional: uses default from environment if not set
+      vertexai_location: "us-central1"
+      similarity_threshold: 0.3
+      limit: 10
+      params:
+        - name: "query"
+          type: "string"
+          description: "The search query"
+          required: true
+
 root_agent:
   name: 'ai_assistant'
   model: 'gemini-2.5-pro'
