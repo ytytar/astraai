@@ -36,12 +36,32 @@ class HuggingFaceEmbeddingProvider(BaseEmbeddingProvider):
     def __init__(self, model_name: str = 'all-MiniLM-L6-v2'):
         try:
             from sentence_transformers import SentenceTransformer
+            self.SentenceTransformer = SentenceTransformer
         except ImportError:
             raise ImportError(
                 "sentence-transformers is required for HuggingFace embeddings. "
                 "Install it with: pip install sentence-transformers"
             )
-        self.model = SentenceTransformer(model_name)
+        self.model_name = model_name
+        self._model = None
+
+    @property
+    def model(self):
+        """Lazy load the model only when first accessed."""
+        if self._model is None:
+            import os
+            # Reduce HuggingFace Hub retries from default (unlimited) to 3
+            os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '30')
+            os.environ.setdefault('CURL_CA_BUNDLE', '')
+
+            # SentenceTransformer will respect HF_HUB_OFFLINE if network is unavailable
+            try:
+                self._model = self.SentenceTransformer(self.model_name)
+            except Exception as e:
+                # If download fails, try offline mode (use cached model)
+                os.environ['HF_HUB_OFFLINE'] = '1'
+                self._model = self.SentenceTransformer(self.model_name)
+        return self._model
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for a list of texts."""
